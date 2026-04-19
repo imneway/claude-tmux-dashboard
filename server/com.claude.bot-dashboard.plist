@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.bot-dashboard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE_PATH__</string>
+        <string>__SERVER_JS_PATH__</string>
+    </array>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/dashboard-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/dashboard-stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:__HOME__/.local/bin:__HOME__/.bun/bin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PORT</key>
+        <string>__PORT__</string>
+        <key>TOKEN</key>
+        <string>__TOKEN__</string>
+        <key>MONITOR_DIR</key>
+        <string>__MONITOR_DIR__</string>
+        <key>HOST</key>
+        <string>__HOST__</string>
+    </dict>
+</dict>
+</plist>

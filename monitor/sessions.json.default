@@ -1,0 +1,15 @@
+{
+  "_comment": "One entry per Claude Code bot. Change cwd and command to match your setup, then flip enabled to true. tmuxSession defaults to the key if omitted.",
+  "discord-bot": {
+    "command": "claude --dangerously-skip-permissions --channels plugin:discord@claude-plugins-official",
+    "cwd": "__REPLACE_WITH_ABSOLUTE_PATH__",
+    "resumable": true,
+    "enabled": false
+  },
+  "telegram-bot": {
+    "command": "claude --dangerously-skip-permissions --channels plugin:telegram@claude-plugins-official",
+    "cwd": "__REPLACE_WITH_ABSOLUTE_PATH__",
+    "resumable": true,
+    "enabled": false
+  }
+}

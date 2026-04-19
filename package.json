@@ -1,0 +1,32 @@
+{
+  "name": "claude-bot-dashboard",
+  "version": "0.1.0",
+  "description": "Web dashboard + tmux session monitor for Claude Code bots (Discord, Telegram, etc.)",
+  "main": "server/index.js",
+  "bin": {
+    "claude-bot-dashboard": "server/index.js"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "install:all": "bash install.sh",
+    "uninstall": "bash uninstall.sh"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "tmux",
+    "discord",
+    "telegram",
+    "bot",
+    "dashboard",
+    "monitor"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  }
+}
