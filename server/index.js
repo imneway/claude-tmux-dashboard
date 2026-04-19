@@ -3,6 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { exec, spawn } = require('child_process');
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 7010;
@@ -249,12 +250,15 @@ async function getTmuxStatusReport() {
   const defaultEffort = _getDefaultEffort();
   const statusOutput = await run(`bash -lc 'bash "${MONITOR_DIR}/ctl.sh" status'`);
 
-  // Parse session names and statuses from status output
+  // Parse session names and statuses from status output.
+  // Defense in depth: session names get interpolated into tmux commands later,
+  // so enforce the same character whitelist as user-facing API endpoints.
+  const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
   const sessions = [];
   const sessionStatuses = {};
   for (const line of statusOutput.split('\n')) {
     const match = line.match(/^(\S+)\s+(running|dead|disabled|paused|unknown)/);
-    if (match && match[1] !== 'NAME' && match[1] !== '----') {
+    if (match && match[1] !== 'NAME' && match[1] !== '----' && NAME_RE.test(match[1])) {
       sessions.push(match[1]);
       sessionStatuses[match[1]] = match[2];
     }
@@ -657,7 +661,11 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const token = url.searchParams.get('token') || req.headers['x-token'];
 
-  if (!TOKEN || token !== TOKEN) {
+  // Constant-time compare to resist timing attacks (cheap paranoia for LAN)
+  const tokenBuf = Buffer.from(String(token || ''));
+  const expectedBuf = Buffer.from(TOKEN);
+  if (!TOKEN || tokenBuf.length !== expectedBuf.length ||
+      !crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
     return respond(res, 401, 'Unauthorized');
   }
 
