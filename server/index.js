@@ -236,7 +236,17 @@ function parseSessionMeta(pane) {
     }
   }
 
-  return { effort, context, cost, mode, busy };
+  // Detect blocking interactive prompts that strand the session until a key is pressed
+  // (most common: "Resume from summary" dialog after --resume near context limit).
+  let waitingPrompt = null;
+  const tailText = tail.join('\n');
+  if (/Resume from summary/i.test(tailText) && /Enter to confirm/i.test(tailText)) {
+    waitingPrompt = 'resume';
+  } else if (/Enter to confirm · Esc to cancel/.test(tailText)) {
+    waitingPrompt = 'confirm';
+  }
+
+  return { effort, context, cost, mode, busy, waitingPrompt };
 }
 
 function _getDefaultEffort() {
@@ -327,6 +337,7 @@ async function getTmuxStatusReport() {
       name: session,
       status: sessionStatuses[session] || 'unknown',
       busy: meta.busy,
+      waitingPrompt: meta.waitingPrompt,
       pluginExpected,
       pluginRunning,
       effort: meta.effort,
@@ -385,6 +396,10 @@ function renderTmuxStatusHTML(data, token) {
 
   const renderStatus = s => {
     if (s.status === 'running') {
+      if (s.waitingPrompt) {
+        const label = s.waitingPrompt === 'resume' ? 'resume prompt' : 'prompt';
+        return `<span class="amber">waiting · ${label}</span> <button class="reset-btn" onclick="sendKeys('${escHtml(s.name)}','enter')">[ENTER]</button>`;
+      }
       if (s.pluginExpected && !s.pluginRunning) {
         return `<span class="red">running · no plugin</span> <button class="reset-btn" onclick="restartBot('${escHtml(s.name)}')">[RESTART]</button>`;
       }
@@ -588,6 +603,10 @@ function buildEffortCell(name, effort) {
 
 function buildStatus(s) {
   if (s.status === 'running') {
+    if (s.waitingPrompt) {
+      const label = s.waitingPrompt === 'resume' ? 'resume prompt' : 'prompt';
+      return '<span class="amber">waiting · ' + label + '</span> <button class="reset-btn" onclick="sendKeys(\\'' + escHtml(s.name) + '\\',\\'enter\\')">[ENTER]</button>';
+    }
     if (s.pluginExpected && !s.pluginRunning) {
       return '<span class="red">running · no plugin</span> <button class="reset-btn" onclick="restartBot(\\'' + escHtml(s.name) + '\\')">[RESTART]</button>';
     }
@@ -626,7 +645,7 @@ function buildRow(s) {
 }
 
 async function sendKeys(name, action) {
-  const msgs = { esc: 'Send ESC to', compact: 'Send /compact to', clear: 'Send /clear to' };
+  const msgs = { esc: 'Send ESC to', enter: 'Send Enter to (confirm resume prompt)', compact: 'Send /compact to', clear: 'Send /clear to' };
   if (!confirm(msgs[action] + '\\n\\n  ' + name + '\\n\\nConfirm?')) return;
   appendLog(name + ' <- ' + action + '...', 'info');
   try {
@@ -875,6 +894,7 @@ const server = http.createServer(async (req, res) => {
     if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) return respond(res, 400, 'Invalid session name');
     const actionMap = {
       esc: ['Escape'],
+      enter: ['Enter'],
       compact: ['/compact', 'Enter'],
       clear: ['/clear', 'Enter'],
     };
