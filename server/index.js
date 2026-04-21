@@ -238,12 +238,27 @@ function parseSessionMeta(pane) {
 
   // Detect blocking interactive prompts that strand the session until a key is pressed
   // (most common: "Resume from summary" dialog after --resume near context limit).
+  //
+  // Gate by statusline visibility: when a real dialog is active, it pushes the
+  // "│ N% │ $X │ bypass permissions" statusline off-screen. If any of those
+  // markers is still in the bottom slice, the session is idle/busy — not blocked.
+  // This prevents false positives when conversation text happens to quote the
+  // prompt strings (e.g., when debugging this very feature).
   let waitingPrompt = null;
-  const tailText = tail.join('\n');
-  if (/Resume from summary/i.test(tailText) && /Enter to confirm/i.test(tailText)) {
-    waitingPrompt = 'resume';
-  } else if (/Enter to confirm · Esc to cancel/.test(tailText)) {
-    waitingPrompt = 'confirm';
+  const bottom = lines.slice(-6);
+  const statuslineVisible = bottom.some(l =>
+    /[│|]\s*(?:ctx:\s*)?\d+%/.test(l) ||
+    /bypass permissions on/.test(l) ||
+    /accept edits on/.test(l) ||
+    /plan mode on/.test(l)
+  );
+  if (!statuslineVisible) {
+    const tailText = tail.join('\n');
+    if (/❯\s*Resume from summary/.test(tailText) || /Resume from summary\s*\(recommended\)/.test(tailText)) {
+      waitingPrompt = 'resume';
+    } else if (/Enter to confirm\s*·\s*Esc to cancel/.test(tailText)) {
+      waitingPrompt = 'confirm';
+    }
   }
 
   return { effort, context, cost, mode, busy, waitingPrompt };
