@@ -290,11 +290,45 @@ async function getTmuxStatusReport() {
     // Fall back to settings.json default when effort is still unknown
     if (meta.effort === '-') meta.effort = defaultEffort;
 
+    // Channel plugin liveness check: if the session was started with
+    // --channels plugin:NAME, verify a child process is actually running it.
+    // Mismatch → bot won't receive messages even though tmux session is alive.
+    let pluginExpected = false;
+    let pluginRunning = true;
+    if (sessionStatuses[session] === 'running') {
+      try {
+        const stateRaw = fs.readFileSync(
+          path.join(MONITOR_DIR, 'state', `${session}.json`), 'utf8');
+        const state = JSON.parse(stateRaw);
+        const pid = state.pid;
+        const sessionsCfg = JSON.parse(fs.readFileSync(
+          path.join(MONITOR_DIR, 'sessions.json'), 'utf8'));
+        const cmd = (sessionsCfg[session] || {}).command || '';
+        if (cmd.includes('--channels plugin:') && pid && pid > 1) {
+          pluginExpected = true;
+          const children = await run(`pgrep -P ${pid} 2>/dev/null || true`);
+          let found = false;
+          for (const childPid of children.split('\n').map(s => s.trim()).filter(Boolean)) {
+            try {
+              const childCmd = await run(`ps -p ${childPid} -o command= 2>/dev/null || true`);
+              if (childCmd.includes('plugins/cache') || childCmd.includes('plugin:')) {
+                found = true;
+                break;
+              }
+            } catch { /* ignore */ }
+          }
+          pluginRunning = found;
+        }
+      } catch { /* ignore — stale state file etc. */ }
+    }
+
     metaLines.push(padRow(session, meta.effort, meta.context, meta.cost, meta.mode));
     sessionData.push({
       name: session,
       status: sessionStatuses[session] || 'unknown',
       busy: meta.busy,
+      pluginExpected,
+      pluginRunning,
       effort: meta.effort,
       context: meta.context,
       cost: meta.cost,
@@ -351,6 +385,9 @@ function renderTmuxStatusHTML(data, token) {
 
   const renderStatus = s => {
     if (s.status === 'running') {
+      if (s.pluginExpected && !s.pluginRunning) {
+        return `<span class="red">running · no plugin</span> <button class="reset-btn" onclick="restartBot('${escHtml(s.name)}')">[RESTART]</button>`;
+      }
       return s.busy
         ? `<span class="amber">running · busy</span>`
         : `<span class="green">running · idle</span>`;
@@ -543,6 +580,9 @@ function buildEffortCell(name, effort) {
 
 function buildStatus(s) {
   if (s.status === 'running') {
+    if (s.pluginExpected && !s.pluginRunning) {
+      return '<span class="red">running · no plugin</span> <button class="reset-btn" onclick="restartBot(\\'' + escHtml(s.name) + '\\')">[RESTART]</button>';
+    }
     return s.busy
       ? '<span class="amber">running · busy</span>'
       : '<span class="green">running · idle</span>';

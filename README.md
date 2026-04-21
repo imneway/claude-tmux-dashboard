@@ -81,7 +81,7 @@ http://<your-ip>:7010/tmux-status?token=<token>
 | Column  | Meaning                                                                       |
 |---------|-------------------------------------------------------------------------------|
 | SESSION | tmux session name                                                             |
-| STATUS  | `running · idle` / `running · busy` / `dead` / `paused-crash-loop` (with `[RESET]` button) |
+| STATUS  | `running · idle` / `running · busy` / `running · no plugin` (with inline `[RESTART]`) / `dead` / `paused-crash-loop` (with `[RESET]`) |
 | EFFORT  | Click `high` / `xhigh` / `max` to switch (persists via tmux env var)          |
 | CTX     | Conversation context % (from Claude Code's statusline)                        |
 | COST    | Cumulative API spend for the current session                                  |
