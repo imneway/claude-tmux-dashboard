@@ -25,8 +25,8 @@ Works with any Claude Code channel plugin â€” **Discord, Telegram, or custom** â
 ## Install
 
 ```bash
-git clone https://github.com/<you>/claude-bot-dashboard.git
-cd claude-bot-dashboard
+git clone https://github.com/imneway/claude-tmux-dashboard.git
+cd claude-tmux-dashboard
 ./install.sh
 ```
 
