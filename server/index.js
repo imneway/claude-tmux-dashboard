@@ -442,7 +442,12 @@ function renderTmuxStatusHTML(data, token) {
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: var(--bg); color: var(--fg); font-family: 'SF Mono', 'Menlo', 'Monaco', monospace; font-size: 13px; padding: 16px; }
-  h1 { color: var(--fg); font-size: 18px; margin: 0 0 20px; font-weight: normal; letter-spacing: 0.5px; }
+  h1 { color: var(--fg); font-size: 18px; margin: 0; font-weight: normal; letter-spacing: 0.5px; }
+  #header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+  #codex-badge { font-size: 12px; color: var(--fg-faint); }
+  #codex-badge.ok { color: var(--accent); }
+  #codex-badge.warn { color: var(--amber); }
+  #codex-badge.err { color: var(--red); }
   h2 { color: var(--accent); font-size: 14px; margin: 16px 0 8px; font-weight: normal; }
   h2:first-child { margin-top: 0; }
   table { border-collapse: collapse; width: 100%; }
@@ -494,7 +499,10 @@ function renderTmuxStatusHTML(data, token) {
   }
 </style>
 </head><body>
-<h1>Claude Bot Dashboard</h1>
+<div id="header">
+  <h1>Claude Bot Dashboard</h1>
+  <div id="codex-badge">Codex · checking…</div>
+</div>
 <div id="refresh-bar">
   <h2>SESSION_INFO</h2>
   <div><span id="auto-refresh"></span> <button onclick="refreshTable()">[REFRESH]</button></div>
@@ -643,6 +651,47 @@ async function setEffort(name, level) {
   }
 }
 
+function formatDuration(sec) {
+  if (sec == null || !isFinite(sec)) return '';
+  const abs = Math.abs(sec);
+  if (abs < 60) return abs + 's';
+  if (abs < 3600) return Math.round(abs / 60) + 'm';
+  if (abs < 86400) return Math.round(abs / 3600 * 10) / 10 + 'h';
+  return Math.round(abs / 86400 * 10) / 10 + 'd';
+}
+
+async function refreshCodex() {
+  const el = document.getElementById('codex-badge');
+  try {
+    const res = await fetch('/api/codex-status?token=' + TOKEN);
+    const d = await res.json();
+    if (!d.loggedIn) {
+      el.className = 'err';
+      if (d.reason === 'auth_file_missing_or_unreadable' || d.reason === 'no_id_token') {
+        el.textContent = 'Codex · logged out · run: codex login';
+      } else if (d.expiresIn != null && d.expiresIn <= 0) {
+        el.textContent = 'Codex · token expired · run: codex login';
+      } else {
+        el.textContent = 'Codex · not logged in';
+      }
+      return;
+    }
+    const exp = d.expiresIn;
+    const email = d.email || 'unknown';
+    if (exp < 15 * 60) {
+      el.className = 'warn';
+      el.textContent = 'Codex · ' + email + ' · expires in ' + formatDuration(exp);
+    } else {
+      el.className = 'ok';
+      el.textContent = 'Codex · ' + email + ' · valid ' + formatDuration(exp);
+    }
+  } catch (e) {
+    el.className = 'err';
+    el.textContent = 'Codex · status check failed';
+  }
+}
+refreshCodex();
+
 async function refreshTable() {
   try {
     const res = await fetch('/api/sessions?token=' + TOKEN);
@@ -732,7 +781,7 @@ setInterval(() => {
   if (restartInProgress) { cdEl.textContent = 'paused'; return; }
   countdown--;
   cdEl.textContent = 'refresh in ' + countdown + 's';
-  if (countdown <= 0) { countdown = REFRESH_INTERVAL; refreshTable(); }
+  if (countdown <= 0) { countdown = REFRESH_INTERVAL; refreshTable(); refreshCodex(); }
 }, 1000);
 </script>
 </body></html>`;
@@ -784,6 +833,38 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/codex-status') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    const authPath = path.join(process.env.HOME, '.codex/auth.json');
+    try {
+      const auth = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+      const tok = (auth.tokens || {}).id_token;
+      if (!tok) {
+        res.end(JSON.stringify({ loggedIn: false, reason: 'no_id_token' }));
+        return;
+      }
+      const [, payload] = tok.split('.');
+      if (!payload) {
+        res.end(JSON.stringify({ loggedIn: false, reason: 'malformed_token' }));
+        return;
+      }
+      const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
+      const claims = JSON.parse(Buffer.from(padded, 'base64url').toString('utf8'));
+      const now = Math.floor(Date.now() / 1000);
+      const expiresIn = (claims.exp || 0) - now;
+      res.end(JSON.stringify({
+        loggedIn: expiresIn > 0,
+        email: claims.email || '',
+        expiresIn,                     // seconds (negative if expired)
+        refreshedAt: auth.last_refresh || '',
+        authMode: auth.auth_mode || '',
+      }));
+    } catch (e) {
+      res.end(JSON.stringify({ loggedIn: false, reason: 'auth_file_missing_or_unreadable' }));
     }
     return;
   }
@@ -899,6 +980,7 @@ server.listen(PORT, HOST, () => {
   console.log(`Claude Bot Dashboard listening on http://${HOST}:${PORT}`);
   console.log(`- /tmux-status?token=...           (web UI)`);
   console.log(`- /api/sessions?token=...          (JSON)`);
+  console.log(`- /api/codex-status?token=...      (JSON, Codex auth status)`);
   console.log(`- /api/restart-bot?token=&name=    (POST)`);
   console.log(`- /api/reset-session?token=&name=  (POST, clears saved sessionId then restarts)`);
   console.log(`- /api/send-keys?token=&name=&action=esc|compact|clear  (POST)`);
