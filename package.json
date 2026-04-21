@@ -1,10 +1,10 @@
 {
-  "name": "claude-bot-dashboard",
+  "name": "claude-tmux-dashboard",
   "version": "0.1.0",
   "description": "Web dashboard + tmux session monitor for Claude Code bots (Discord, Telegram, etc.)",
   "main": "server/index.js",
   "bin": {
-    "claude-bot-dashboard": "server/index.js"
+    "claude-tmux-dashboard": "server/index.js"
   },
   "scripts": {
     "start": "node server/index.js",

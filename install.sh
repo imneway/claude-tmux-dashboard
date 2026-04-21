@@ -5,7 +5,7 @@ umask 077
 
 show_help() {
   cat <<'HELP'
-claude-bot-dashboard installer
+claude-tmux-dashboard installer
 
 Usage: ./install.sh [--port <port>] [--token <token>] [--host <host>]
 
