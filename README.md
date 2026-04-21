@@ -4,6 +4,8 @@ A zero-dependency web dashboard + tmux session monitor for Claude Code bots.
 
 Works with any Claude Code channel plugin — **Discord, Telegram, or custom** — as long as each bot runs in its own tmux session.
 
+![Dashboard screenshot](docs/screenshot.jpeg)
+
 ## What you get
 
 - **Web UI** — list all your bot sessions, see live status (running/idle/busy), context%, cost, thinking effort, and permission mode.
