@@ -257,7 +257,7 @@ async function getTmuxStatusReport() {
   const sessions = [];
   const sessionStatuses = {};
   for (const line of statusOutput.split('\n')) {
-    const match = line.match(/^(\S+)\s+(running|dead|disabled|paused|unknown)/);
+    const match = line.match(/^(\S+)\s+(\S*?(?:running|dead|disabled|paused|unknown)\S*)/);
     if (match && match[1] !== 'NAME' && match[1] !== '----' && NAME_RE.test(match[1])) {
       sessions.push(match[1]);
       sessionStatuses[match[1]] = match[2];
@@ -350,10 +350,15 @@ function renderTmuxStatusHTML(data, token) {
   };
 
   const renderStatus = s => {
-    if (s.status !== 'running') return `<span class="red">${escHtml(s.status)}</span>`;
-    return s.busy
-      ? `<span class="amber">running · busy</span>`
-      : `<span class="green">running · idle</span>`;
+    if (s.status === 'running') {
+      return s.busy
+        ? `<span class="amber">running · busy</span>`
+        : `<span class="green">running · idle</span>`;
+    }
+    const resetBtn = s.status.startsWith('paused')
+      ? ` <button class="reset-btn" onclick="resetSession('${escHtml(s.name)}')">[RESET]</button>`
+      : '';
+    return `<span class="red">${escHtml(s.status)}</span>${resetBtn}`;
   };
 
   const renderActions = s => {
@@ -421,6 +426,8 @@ function renderTmuxStatusHTML(data, token) {
   .effort-active { color: var(--accent); padding: 0 2px; font-weight: bold; }
   .actions { display: inline-flex; gap: 2px; flex-wrap: nowrap; }
   .actions button { padding: 2px 4px; }
+  .reset-btn { color: var(--amber); padding: 2px 4px; margin-left: 4px; }
+  .reset-btn:hover { color: var(--accent); }
   #log-area {
     background: var(--bg-alt); border: none; padding: 12px; margin-top: 8px;
     min-height: 60px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; font-size: 12px;
@@ -535,10 +542,15 @@ function buildEffortCell(name, effort) {
 }
 
 function buildStatus(s) {
-  if (s.status !== 'running') return '<span class="red">' + escHtml(s.status) + '</span>';
-  return s.busy
-    ? '<span class="amber">running · busy</span>'
-    : '<span class="green">running · idle</span>';
+  if (s.status === 'running') {
+    return s.busy
+      ? '<span class="amber">running · busy</span>'
+      : '<span class="green">running · idle</span>';
+  }
+  const resetBtn = String(s.status).startsWith('paused')
+    ? ' <button class="reset-btn" onclick="resetSession(\\'' + escHtml(s.name) + '\\')">[RESET]</button>'
+    : '';
+  return '<span class="red">' + escHtml(s.status) + '</span>' + resetBtn;
 }
 
 function buildActions(s) {
@@ -643,6 +655,35 @@ async function restartBot(name) {
   refreshTable();
 }
 
+async function resetSession(name) {
+  if (!confirm('Reset session (clears saved Claude session ID and starts fresh, losing previous context)\\n\\n  ' + name + '\\n\\nConfirm?')) return;
+  restartInProgress = true;
+  appendLog('Resetting ' + name + '...', 'info');
+  try {
+    const res = await fetch('/api/reset-session?token=' + TOKEN + '&name=' + encodeURIComponent(name), { method: 'POST' });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.trim()) appendLog(line, line.includes('FAILED') || line.includes('failed') ? 'err' : 'info');
+      }
+    }
+    if (buffer.trim()) appendLog(buffer, buffer.includes('FAILED') ? 'err' : 'info');
+    appendLog(name + ' reset complete.', res.ok ? 'ok' : 'err');
+  } catch (e) {
+    appendLog('Error: ' + e.message, 'err');
+  }
+  restartInProgress = false;
+  countdown = REFRESH_INTERVAL;
+  refreshTable();
+}
+
 // Auto-refresh table every 5s (paused during restart)
 const REFRESH_INTERVAL = 5;
 let countdown = REFRESH_INTERVAL;
@@ -740,6 +781,48 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (url.pathname === '/api/reset-session' && req.method === 'POST') {
+    const name = url.searchParams.get('name');
+    if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) return respond(res, 400, 'Invalid session name');
+    const statePath = path.join(MONITOR_DIR, 'state', `${name}.json`);
+    res.writeHead(200, {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Transfer-Encoding': 'chunked',
+    });
+    try {
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      delete state.claudeSessionId;
+      state.paused = false;
+      state.restartCount = 0;
+      state.restartTimestamps = [];
+      state.status = 'unknown';
+      const tmp = statePath + '.tmp.' + process.pid;
+      fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+      fs.renameSync(tmp, statePath);
+      res.write(`State cleared (claudeSessionId removed, unpaused).\n`);
+    } catch (e) {
+      res.write(`State reset failed: ${e.message}\n`);
+      res.end();
+      return;
+    }
+
+    const child = spawn('bash', [
+      path.join(MONITOR_DIR, 'ctl.sh'),
+      'restart', name,
+    ], { env: { ...process.env, TERM: 'dumb' } });
+    child.stdout.on('data', chunk => res.write(chunk));
+    child.stderr.on('data', chunk => res.write(chunk));
+    child.on('close', code => {
+      res.write(code === 0 ? `\n[exit: 0]\n` : `\n[exit: ${code}]\n`);
+      res.end();
+    });
+    child.on('error', err => {
+      res.write(`\nspawn error: ${err.message}\n`);
+      res.end();
+    });
+    return;
+  }
+
   if (url.pathname === '/api/restart-bot' && req.method === 'POST') {
     const name = url.searchParams.get('name');
     if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) {
@@ -777,6 +860,7 @@ server.listen(PORT, HOST, () => {
   console.log(`- /tmux-status?token=...           (web UI)`);
   console.log(`- /api/sessions?token=...          (JSON)`);
   console.log(`- /api/restart-bot?token=&name=    (POST)`);
+  console.log(`- /api/reset-session?token=&name=  (POST, clears saved sessionId then restarts)`);
   console.log(`- /api/send-keys?token=&name=&action=esc|compact|clear  (POST)`);
   console.log(`- /api/set-effort?token=&name=&level=high|xhigh|max     (POST)`);
   console.log(`- MONITOR_DIR: ${MONITOR_DIR}`);

@@ -81,7 +81,7 @@ http://<your-ip>:7010/tmux-status?token=<token>
 | Column  | Meaning                                                                       |
 |---------|-------------------------------------------------------------------------------|
 | SESSION | tmux session name                                                             |
-| STATUS  | `running · idle` / `running · busy` / `dead` / `disabled`                     |
+| STATUS  | `running · idle` / `running · busy` / `dead` / `paused-crash-loop` (with `[RESET]` button) |
 | EFFORT  | Click `high` / `xhigh` / `max` to switch (persists via tmux env var)          |
 | CTX     | Conversation context % (from Claude Code's statusline)                        |
 | COST    | Cumulative API spend for the current session                                  |
@@ -100,6 +100,7 @@ All endpoints require `?token=<token>`.
 | GET    | `/tmux-status`                                    | HTML dashboard (add `&format=text` for text)    |
 | GET    | `/api/sessions`                                   | JSON with all session data                      |
 | POST   | `/api/restart-bot?name=<session>`                 | Restart, stream log output                      |
+| POST   | `/api/reset-session?name=<session>`               | Clear saved Claude session ID + unpause + restart (use after `--resume` failures) |
 | POST   | `/api/send-keys?name=<session>&action=esc\|compact\|clear` | Send key/slash command to a session    |
 | POST   | `/api/set-effort?name=<session>&level=high\|xhigh\|max`   | Set thinking effort for a session      |
 
