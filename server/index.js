@@ -701,10 +701,8 @@ async function refreshCodex() {
     const d = await res.json();
     if (!d.loggedIn) {
       el.className = 'err';
-      if (d.reason === 'auth_file_missing_or_unreadable' || d.reason === 'no_id_token') {
+      if (d.reason === 'auth_file_missing_or_unreadable' || d.reason === 'no_tokens') {
         el.textContent = 'Codex · logged out · run: codex login';
-      } else if (d.expiresIn != null && d.expiresIn <= 0) {
-        el.textContent = 'Codex · token expired · run: codex login';
       } else {
         el.textContent = 'Codex · not logged in';
       }
@@ -712,7 +710,15 @@ async function refreshCodex() {
     }
     const exp = d.expiresIn;
     const email = d.email || 'unknown';
-    if (exp < 15 * 60) {
+    // Access token has a 10-day lifetime; refresh_token renews it silently.
+    // Only warn if access is stale AND we can't refresh.
+    if (exp != null && exp <= 0 && d.hasRefresh) {
+      el.className = 'ok';
+      el.textContent = 'Codex · ' + email + ' · auto-refresh';
+    } else if (exp != null && exp <= 0) {
+      el.className = 'warn';
+      el.textContent = 'Codex · ' + email + ' · token stale · run: codex login';
+    } else if (exp != null && exp < 60 * 60) {
       el.className = 'warn';
       el.textContent = 'Codex · ' + email + ' · expires in ' + formatDuration(exp);
     } else {
@@ -876,24 +882,50 @@ const server = http.createServer(async (req, res) => {
     const authPath = path.join(process.env.HOME, '.codex/auth.json');
     try {
       const auth = JSON.parse(fs.readFileSync(authPath, 'utf8'));
-      const tok = (auth.tokens || {}).id_token;
-      if (!tok) {
-        res.end(JSON.stringify({ loggedIn: false, reason: 'no_id_token' }));
+      const tokens = auth.tokens || {};
+      // Session validity is governed by access_token (10-day lifetime) +
+      // refresh_token (long-lived). id_token is a 1-hour ID assertion and
+      // expires constantly between use — checking it reports false negatives.
+      const accessTok = tokens.access_token;
+      const idTok = tokens.id_token;
+      const hasRefresh = !!tokens.refresh_token;
+      if (!accessTok && !idTok && !hasRefresh && !auth.OPENAI_API_KEY) {
+        res.end(JSON.stringify({ loggedIn: false, reason: 'no_tokens' }));
         return;
       }
-      const [, payload] = tok.split('.');
-      if (!payload) {
-        res.end(JSON.stringify({ loggedIn: false, reason: 'malformed_token' }));
-        return;
+      // Decode id_token (not access_token) just for the email — access_token
+      // payloads on OpenAI don't carry email.
+      let email = '';
+      if (idTok) {
+        const [, payload] = idTok.split('.');
+        if (payload) {
+          try {
+            const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
+            const claims = JSON.parse(Buffer.from(padded, 'base64url').toString('utf8'));
+            email = claims.email || '';
+          } catch {}
+        }
       }
-      const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
-      const claims = JSON.parse(Buffer.from(padded, 'base64url').toString('utf8'));
-      const now = Math.floor(Date.now() / 1000);
-      const expiresIn = (claims.exp || 0) - now;
+      // Compute remaining from access_token. Fall back to id_token if absent.
+      let expiresIn = null;
+      const expSource = accessTok || idTok;
+      if (expSource) {
+        const [, payload] = expSource.split('.');
+        if (payload) {
+          try {
+            const padded = payload + '='.repeat((4 - payload.length % 4) % 4);
+            const claims = JSON.parse(Buffer.from(padded, 'base64url').toString('utf8'));
+            expiresIn = (claims.exp || 0) - Math.floor(Date.now() / 1000);
+          } catch {}
+        }
+      }
+      // A refresh_token means we can silently re-mint even after access expires.
+      const loggedIn = hasRefresh || (expiresIn != null && expiresIn > 0) || !!auth.OPENAI_API_KEY;
       res.end(JSON.stringify({
-        loggedIn: expiresIn > 0,
-        email: claims.email || '',
-        expiresIn,                     // seconds (negative if expired)
+        loggedIn,
+        email,
+        expiresIn,                     // seconds remaining on access_token
+        hasRefresh,
         refreshedAt: auth.last_refresh || '',
         authMode: auth.auth_mode || '',
       }));
